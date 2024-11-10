@@ -5,6 +5,10 @@ out vec4 FragColor;
 uniform vec2 iResolution;
 uniform float iTime;
 
+uniform vec3 cameraPos; // Camera position
+uniform float yaw;       // Horizontal angle (yaw)
+uniform float pitch;     // Vertical angle (pitch)
+
 const float FOV = 1.0;
 const int MAX_STEPS = 256;
 const float MAX_DIST = 500.0;
@@ -30,19 +34,13 @@ vec2 map(vec3 p) {
     float sphereID = 1.0;
     vec2 sphere = vec2(sphereDist, sphereID);
 
-    float planeDist = sdPlane(p, vec3(0,1,0),1.0);
+    float planeDist = sdPlane(p, vec3(0,1,0), 1.0);
     float planeID = 2.0;
     vec2 plane = vec2(planeDist, planeID);
 
     vec2 res = unionOp(sphere, plane);
 
     return res;
-}
-
-// Ray direction based on FOV and screen coordinates
-vec3 rayDirection(vec2 uv) {
-    vec3 dir = vec3(uv, FOV);
-    return normalize(dir);
 }
 
 // Ray marching function, returning the distance to the nearest surface
@@ -76,43 +74,68 @@ vec3 getLight(vec3 p, vec3 rd, vec3 color) {
     vec3 R = reflect(-L, N);
 
     vec3 specularColor = vec3(0.5);
-    vec3 specular = specularColor * pow(clamp(dot(R,V), 0.0,1.0),10.0);
-    vec3 diff = color * clamp(dot(L,N),0.0,1.0);
+    vec3 specular = specularColor * pow(clamp(dot(R, V), 0.0, 1.0), 10.0);
+    vec3 diff = color * clamp(dot(L, N), 0.0, 1.0);
     vec3 ambient = color * 0.05;
 
-    float d = rayMarch(p + N * EPSILON, normalize(lightPos)).x;
-    if(d < length(lightPos - p)) {
-        return ambient;
+    // Soft shadow calculation
+    float shadow = 1.0;
+    float maxDistToLight = length(lightPos - p);
+    float stepDist = 0.01;  // Small steps to increase shadow smoothness
+
+    float t = EPSILON;  // Start a small distance from the surface
+    for (int i = 0; i < 128; i++) {
+        vec3 shadowPoint = p + L * t;
+        float distToSurface = map(shadowPoint).x;
+
+        // Calculate shadow factor based on proximity to objects
+        shadow = min(shadow, 8.0 * distToSurface / t);
+        
+        t += distToSurface;  // Advance along the light direction by surface distance
+        if (t > maxDistToLight || shadow <= 0.01) break;  // Exit early if fully in shadow
     }
 
-    return diff + ambient + specular;
+    shadow = clamp(shadow, 0.0, 1.0);  // Clamp shadow factor to [0, 1]
+
+    return (diff * shadow + ambient + specular * shadow);
 }
 
 vec3 getMaterial(vec3 p, float id){
     vec3 m;
     switch(int(id)){
         case 1:
-            m = vec3(0.9,0.9,0.0); break;
+            m = vec3(0.9, 0.9, 0.0); break;
         case 2:
-            m = vec3(0.2 + 0.4 * mod(floor(p.x) + floor(p.z), 2.0));break;
+            m = vec3(0.2 + 0.4 * mod(floor(p.x) + floor(p.z), 2.0)); break;
     }
     return m;
 }
 
+// Camera calculation
+mat3 getCam(vec3 ro, float yaw, float pitch) {
+    vec3 camF = normalize(vec3(cos(radians(yaw)) * cos(radians(pitch)),
+                                sin(radians(pitch)),
+                                sin(radians(yaw)) * cos(radians(pitch))));
+    vec3 camR = normalize(cross(vec3(0, 1, 0), camF));
+    vec3 camU = cross(camF, camR);
+    return mat3(camR, camU, camF);
+}
+
 // Render function that accumulates color based on ray marching
 void render(inout vec3 col, in vec2 uv) {
-    vec3 ro = vec3(0.0, 0.0, -3.0);
-    vec3 rd = rayDirection(uv);
-
+    vec3 ro = cameraPos;
+    mat3 camMat = getCam(ro, yaw, pitch);
+    vec3 rd = camMat * normalize(vec3(uv, FOV)); // Camera ray direction based on yaw and pitch
+    
     vec2 object = rayMarch(ro, rd);
     
-    vec3 bg = vec3(0.5,0.8,0.9);
+    vec3 bg = vec3(0.5, 0.8, 0.9);
     if (object.x < MAX_DIST) {
         vec3 p = ro + object.x * rd;
-        vec3 m = getMaterial(p,object.y);
+        vec3 m = getMaterial(p, object.y);
         col += getLight(p, rd, m);
 
-        col = mix(col, bg , 1.0 - exp(-0.0008 * object.x * object.x));
+        col = mix(col, bg, 1.0 - exp(-0.0008 * object.x * object.x));
 
     } else {
         col += bg - max(0.95 * rd.y, 0.0);

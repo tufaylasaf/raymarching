@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <glm/glm.hpp>
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -12,6 +14,22 @@
 #include <numeric>
 
 int width = 1600, height = 900;
+
+float yaw = -90.0f; // Horizontal angle
+float pitch = 0.0f; // Vertical angle
+float sensitivity = 0.1f;
+double lastX = width / 2.0;
+double lastY = height / 2.0;
+bool firstMouse = true;
+bool leftMousePressed = false;
+
+// Camera parameters
+glm::vec3 cameraPos = glm::vec3(0.0f, 3.0f, -3.0f);
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+float cameraSpeed = 2.5f; // Adjust speed for smooth movemen
+float deltaTime = 0.0f;   // Time between current frame and last frame
+float lastFrame = 0.0f;   // Time of the last framet
 
 // Shader loading function
 std::string loadShaderSource(const char *filepath)
@@ -69,6 +87,75 @@ GLuint createShaderProgram(const std::string &vertexSource, const std::string &f
     return shaderProgram;
 }
 
+// Mouse movement callback
+void mouseCallback(GLFWwindow *window, double xpos, double ypos)
+{
+    if (leftMousePressed)
+    {
+        if (firstMouse)
+        {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+        }
+
+        float xoffset = xpos - lastX;
+        float yoffset = lastY - ypos;
+        lastX = xpos;
+        lastY = ypos;
+
+        xoffset *= sensitivity;
+        yoffset *= sensitivity;
+
+        yaw -= xoffset;
+        pitch += yoffset;
+
+        if (pitch > 89.0f)
+            pitch = 89.0f;
+        if (pitch < -89.0f)
+            pitch = -89.0f;
+
+        // Update camera direction based on yaw and pitch
+        cameraFront.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        cameraFront.y = sin(glm::radians(pitch));
+        cameraFront.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        cameraFront = glm::normalize(cameraFront);
+    }
+}
+
+// Mouse button callback
+void mouseButtonCallback(GLFWwindow *window, int button, int action, int mods)
+{
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
+    {
+        if (action == GLFW_PRESS)
+        {
+            leftMousePressed = true;
+            firstMouse = true; // Reset to avoid jumps when resuming
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+        else if (action == GLFW_RELEASE)
+        {
+            leftMousePressed = false;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+    }
+}
+
+// Process keyboard input
+void processInput(GLFWwindow *window, float deltaTime)
+{
+    float velocity = cameraSpeed * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cameraPos += velocity * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cameraPos -= velocity * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * velocity;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * velocity;
+}
+
 int main()
 {
     // Initialize GLFW
@@ -101,6 +188,9 @@ int main()
     glfwSetWindowPos(window, windowPosX, windowPosY);
 
     glfwMakeContextCurrent(window);
+
+    glfwSetCursorPosCallback(window, mouseCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
 
     // Load OpenGL functions using GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -149,6 +239,11 @@ int main()
     {
         auto startTime = std::chrono::high_resolution_clock::now();
 
+        float currentFrame = glfwGetTime();
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+        processInput(window, deltaTime);
+
         // Start ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -165,6 +260,15 @@ int main()
 
         float timeValue = glfwGetTime();
         glUniform1f(glGetUniformLocation(shaderProgram, "iTime"), timeValue);
+
+        GLuint yawLocation = glGetUniformLocation(shaderProgram, "yaw");
+        GLuint pitchLocation = glGetUniformLocation(shaderProgram, "pitch");
+        GLuint cameraPosLocation = glGetUniformLocation(shaderProgram, "cameraPos");
+
+        // Set the uniforms
+        glUniform1f(yawLocation, yaw);
+        glUniform1f(pitchLocation, pitch);
+        glUniform3f(cameraPosLocation, cameraPos.x, cameraPos.y, cameraPos.z);
 
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
